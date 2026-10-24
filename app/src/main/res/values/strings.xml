@@ -1,0 +1,4 @@
+<resources>
+    <string name="bench_parked">벤치 정차 확인 (실제 Vehicle 상태 연동 전)</string>
+    <string name="sharing_consent">이 세션에 가상 위치·ETA 공유 동의</string>
+</resources>
