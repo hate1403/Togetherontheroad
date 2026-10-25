@@ -97,7 +97,12 @@ class JourneyPanel(private val context:Context,private val c:LiveController,priv
         confirm("이 장소에 추억을 남길까요?","${p.name} (${String.format(java.util.Locale.US,"%.5f, %.5f",p.latitude,p.longitude)})\n그룹 친구가 100m 이내에서 새 위치를 두 번 보내면 열립니다. 서버 보관은 현재 그룹 종료까지입니다."){c.memoryPlace=p;dismiss();c.openMedia(mode)}
     }
     private fun profile(){val avatars=arrayOf("🚗","🚙","🚐","🚕","🚘");choose("차량 아바타 선택",avatars){avatar->choose("직접 선택한 상태",arrayOf("🚗 이동 준비","☕ 휴식","⏳ 지연","✅ 출발 준비")){state->c.journey("profile",JSONObject().put("avatar",avatar).put("status",state.substringBefore(" ")))}}}
-    private fun choose(title:String,items:Array<String>,picked:(String)->Unit){val x=AlertDialog.Builder(context).setTitle(title).setItems(items){_,i->picked(items[i])}.create();showChild(x)}
+    private fun choose(title:String,items:Array<String>,picked:(String)->Unit){
+        val adapter=object:ArrayAdapter<String>(context,android.R.layout.simple_list_item_1,items){
+            override fun getView(position:Int,convertView:View?,parent:android.view.ViewGroup):View = (super.getView(position,convertView,parent) as TextView).apply{setTextColor(ink);textSize=18f;setPadding(dp(20),dp(14),dp(20),dp(14));minHeight=dp(52)}
+        }
+        val x=AlertDialog.Builder(context).setTitle(title).setAdapter(adapter){_,i->picked(items[i])}.create();showChild(x)
+    }
     private fun preview(drop:JSONObject,bytes:ByteArray,remote:Boolean){
         if(drop.getString("mime").startsWith("audio")){
             if(remote)c.experience.playVoice(drop.getString("assetId"),::notice)else c.experience.playLocalVoice(bytes,::notice)
