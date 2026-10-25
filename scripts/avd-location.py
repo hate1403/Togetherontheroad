@@ -20,6 +20,7 @@ run('shell','appops','set','2000','android:mock_location','allow')
 if 'gps provider [mock]' not in run('shell','dumpsys','location'):
     run('shell','cmd','location','providers','add-test-provider','gps','--requiresSatellite','--supportsAltitude','--supportsSpeed','--supportsBearing','--powerRequirement','3')
 run('shell','cmd','location','providers','set-test-provider-enabled','gps','true')
+run('shell','cmd','location','set-location-enabled','true')
 print(f'AVD TEST INPUT ONLY: {name}, {a.latitude}, {a.longitude}, {a.seconds}s',flush=True)
 print('Stop with Ctrl+C. GPS becomes stale after input stops. APK creates no synthetic participants.',flush=True)
 end=time.monotonic()+a.seconds

@@ -1,3 +1,6 @@
 <resources>
     <string name="proposal_voting_remaining">참여자 동의 확인 중 · %1$d초 남음</string>
+    <string name="journey_status">%1$s\n%2$s</string>
+    <string name="recording_active">녹음 중 · 최대 20초 · 다른 화면으로 이동하면 취소됩니다</string>
+    <string name="paired_upload_instructions">PC 또는 휴대전화 브라우저에서 파일을 선택하세요\n%1$s\n그룹 코드 %2$s\n일회용 코드 %3$s\n5분 이내 1회 업로드 · 재생 및 공유 권한이 있는 파일만 선택하세요</string>
 </resources>

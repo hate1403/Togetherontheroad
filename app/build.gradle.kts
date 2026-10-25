@@ -6,8 +6,8 @@ android {
         applicationId = "io.togetherroad.app"
         minSdk = 28
         targetSdk = 35 // Bench prototype; store target policy must be reviewed before distribution.
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
     flavorDimensions += "platform"
     productFlavors {

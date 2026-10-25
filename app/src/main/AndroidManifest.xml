@@ -3,7 +3,9 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <queries><package android:name="ai.umos.maps.android.navigation.app" /></queries>
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <queries><intent><action android:name="android.intent.action.OPEN_DOCUMENT" /><category android:name="android.intent.category.OPENABLE" /><data android:mimeType="*/*" /></intent><package android:name="ai.umos.maps.android.navigation.app" /></queries>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
@@ -16,7 +18,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <service android:name=".GroupOverlayService" android:exported="false" android:foregroundServiceType="location|specialUse">
+        <activity android:name=".MediaActionActivity" android:exported="false" />
+        <service android:name=".GroupOverlayService" android:exported="false" android:foregroundServiceType="location|specialUse|mediaPlayback">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="User-started group navigation overlay for a stationary prototype with actual location and group data" />
         </service>

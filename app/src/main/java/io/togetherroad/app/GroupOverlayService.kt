@@ -21,30 +21,36 @@ class GroupOverlayService:Service(){
     private lateinit var controller:LiveController
     private var native:PlatformNavigation?=null
     private var controllerStarted=false
+    private var playbackActive=false
     override fun onCreate(){
         super.onCreate();wm=getSystemService(WindowManager::class.java)
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL,"함께 이동",NotificationManager.IMPORTANCE_LOW))
-        controller=LiveController(this){view?.render();updateBubble()}
+        controller=LiveController(this,{view?.render();updateBubble()},{active->playbackActive=active;publishNotification()});activeController=controller
     }
     override fun onBind(intent:Intent?)=null
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
         if(intent?.action==ACTION_STOP){stopSelf();return START_NOT_STICKY}
         if(!Settings.canDrawOverlays(this)){stopSelf();return START_NOT_STICKY}
-        val stop=PendingIntent.getService(this,1,Intent(this,GroupOverlayService::class.java).setAction(ACTION_STOP),PendingIntent.FLAG_IMMUTABLE)
-        val notification=Notification.Builder(this,CHANNEL).setSmallIcon(R.drawable.ic_road).setContentTitle("Together on the Road")
-            .setContentText("위치와 그룹 연결 사용 중 · 종료하면 공유가 중단됩니다").setOngoing(true)
-            .addAction(Notification.Action.Builder(null,"연결 종료",stop).build()).build()
-        if(Build.VERSION.SDK_INT>=29){
-            var type=if(Build.VERSION.SDK_INT>=34)ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
-            if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            startForeground(31,notification,type)
-        }else startForeground(31,notification)
+        publishNotification()
+        if(intent?.action==ACTION_MINIMIZE){showBubble();return START_NOT_STICKY}
         if(!controllerStarted){controllerStarted=true;controller.start()}
         if(intent?.action==ACTION_SHOW){
             // Attach after Pleos has completed its foreground transition, above its temporary UI windows.
             if(view==null)showExperience()
         }
         return START_NOT_STICKY
+    }
+    private fun publishNotification(){
+        val stop=PendingIntent.getService(this,1,Intent(this,GroupOverlayService::class.java).setAction(ACTION_STOP),PendingIntent.FLAG_IMMUTABLE)
+        val notification=Notification.Builder(this,CHANNEL).setSmallIcon(R.drawable.ic_road).setContentTitle("Together on the Road")
+            .setContentText("위치와 그룹 연결 사용 중 · 종료하면 공유가 중단됩니다").setOngoing(true)
+            .addAction(Notification.Action.Builder(null,"연결 종료",stop).build()).build()
+        if(Build.VERSION.SDK_INT>=29){
+            var type=if(Build.VERSION.SDK_INT>=34)ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+            if(playbackActive)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED)type=type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            startForeground(31,notification,type)
+        }else startForeground(31,notification)
     }
     private fun dp(n:Int)=(resources.displayMetrics.density*n).toInt()
     @Suppress("DEPRECATION")private fun display():DisplayMetrics=DisplayMetrics().also{wm.defaultDisplay.getRealMetrics(it)}
@@ -83,9 +89,9 @@ class GroupOverlayService:Service(){
         wm.addView(small,layout(dp(180),dp(64)).apply{x=dp(25);y=dp(14);setTitle("TogetherGroupCompact")})
     }
     override fun onDestroy(){
-        controller.close();native?.close();native=null
+        activeController=null;controller.close();native?.close();native=null
         view?.let{it.destroy();runCatching{wm.removeView(it)}};bubble?.let{runCatching{wm.removeView(it)}}
         view=null;bubble=null;stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy()
     }
-    companion object{const val ACTION_SHOW="io.togetherroad.SHOW_GROUP_OVERLAY";const val ACTION_STOP="io.togetherroad.STOP_GROUP_OVERLAY";private const val CHANNEL="group_navigation_overlay"}
+    companion object{private var active=java.lang.ref.WeakReference<LiveController>(null);var activeController:LiveController? get()=active.get();private set(value){active=java.lang.ref.WeakReference(value)};const val ACTION_MINIMIZE="io.togetherroad.MINIMIZE";const val ACTION_SHOW="io.togetherroad.SHOW_GROUP_OVERLAY";const val ACTION_STOP="io.togetherroad.STOP_GROUP_OVERLAY";private const val CHANNEL="group_navigation_overlay"}
 }

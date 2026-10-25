@@ -9,7 +9,7 @@ import java.util.concurrent.Executors
 import kotlin.math.*
 
 /** Owns real device observations, authenticated membership and real route responses. */
-class LiveController(private val context:Context,private val changed:()->Unit) :AutoCloseable {
+class LiveController(private val context:Context,private val changed:()->Unit, val mediaActive:(Boolean)->Unit={}) :AutoCloseable {
     private val prefs=context.getSharedPreferences("road_settings",Context.MODE_PRIVATE)
     private val main=Handler(Looper.getMainLooper())
     private val executor=Executors.newSingleThreadExecutor()
@@ -39,7 +39,10 @@ class LiveController(private val context:Context,private val changed:()->Unit) :
     private val ticker=object:Runnable{
         override fun run(){if(closed)return;poll();main.postDelayed(this,2500)}
     }
-    fun start(){location.start({f->main.post{if(!closed){fix=f;if(client==null&&destination==null)status="지도에서 목적지를 길게 눌러 지정하세요";locationChanged()}}},{s->main.post{if(!closed&&fix==null){status=s;changed()}}});main.post(ticker)}
+    val experience=JourneyExperience(context,this,changed)
+    var memoryPlace:Place?=null
+    fun notifyUi()=changed()
+    fun start(){experience.start();location.start({f->main.post{if(!closed){fix=f;if(client==null&&destination==null)status="지도에서 목적지를 길게 눌러 지정하세요";locationChanged()}}},{s->main.post{if(!closed&&fix==null){status=s;changed()}}});main.post(ticker)}
     fun configure(url:String,name:String){require(!working&&client==null);SessionClient(url);require(name.isNotBlank()&&name.length<=20);epoch++;route=null;lastRouteOrigin=null;nextRouteTryAt=0;serverUrl=url;displayName=name;prefs.edit().putString("server",url).putString("name",name).apply();changed()}
     private fun poll(){
         if(fix!=null&&System.currentTimeMillis()-fix!!.observedAt>30000&&!busy){status="위치가 오래되었습니다 · GPS 수신을 확인하세요";changed()}
@@ -52,7 +55,7 @@ class LiveController(private val context:Context,private val changed:()->Unit) :
                     lastSentFix=f.observedAt
                 }
                 c.snapshot()
-            },{j->snapshot=j;destination=j.optJSONObject("destination")?.let(::place);val members=j.getJSONArray("members");for(i in 0 until members.length()){val m=members.getJSONObject(i);if(m.getString("id")==c.memberId){route=m.optJSONObject("route");totalDistanceMeters=if(m.isNull("totalDistanceMeters"))null else m.getDouble("totalDistanceMeters")}}
+            },{j->snapshot=j;destination=(j.optJSONObject("personalDestination")?:j.optJSONObject("destination"))?.let(::place);val members=j.getJSONArray("members");for(i in 0 until members.length()){val m=members.getJSONObject(i);if(m.getString("id")==c.memberId){route=m.optJSONObject("route");totalDistanceMeters=if(m.isNull("totalDistanceMeters"))null else m.getDouble("totalDistanceMeters")}}
                 val own=(0 until members.length()).map{members.getJSONObject(it)}.firstOrNull{it.getString("id")==c.memberId}
                 status=when{fix==null||System.currentTimeMillis()-fix!!.observedAt>30000->"위치가 오래되었습니다 · GPS 수신을 확인하세요";own?.optBoolean("routePending")==true->"그룹 연결됨 · 도로 경로 계산 중";!own?.optString("routeError").isNullOrBlank()&&own?.optString("routeError")!="null"->"경로 서버 응답 실패 · 경로 재시도를 눌러주세요";else->"그룹 ${members.length()}대 연결 · 위치 공유 중"};changed()
             },{e->if(e is ApiException&&e.status in listOf(401,404)){c.clear();client=null;snapshot=null;sharing=false;status="그룹이 종료되었습니다"}else{snapshot=null;status="서버 연결이 끊겼습니다 · 다시 연결 중"};changed()},force=false)
@@ -80,7 +83,7 @@ class LiveController(private val context:Context,private val changed:()->Unit) :
         val c=SessionClient(serverUrl);val target=destination
         work({try{c.create(displayName);if(target!=null)c.post("destination",placeJson(target));c.snapshot()}catch(e:Throwable){if(c.sessionId.isNotBlank())runCatching{c.post("leave")};throw e}},{j->client=c;sharing=true;seq=0;lastSentFix=0;snapshot=j;status="그룹을 만들었습니다 · 초대 코드를 공유하세요";changed()})
     }
-    fun joinGroup(code:String){val c=SessionClient(serverUrl);work({c.join(code,displayName);c.snapshot()},{j->epoch++;client=c;sharing=true;seq=0;lastSentFix=0;snapshot=j;route=null;totalDistanceMeters=null;destination=j.optJSONObject("destination")?.let(::place);status="그룹에 참여했습니다";changed()})}
+    fun joinGroup(code:String){val c=SessionClient(serverUrl);work({c.join(code,displayName);c.snapshot()},{j->epoch++;client=c;sharing=true;seq=0;lastSentFix=0;snapshot=j;route=null;totalDistanceMeters=null;destination=(j.optJSONObject("personalDestination")?:j.optJSONObject("destination"))?.let(::place);status="그룹에 참여했습니다";changed()})}
     fun propose(p:Place){val c=client?:return;work({c.post("proposals",JSONObject().put("candidate",placeJson(p)).put("kind","MEETUP"))},{status="합류 장소를 제안했습니다";changed()})}
     fun vote(yes:Boolean){val c=client?:return;val p=snapshot?.optJSONObject("proposal")?:return;work({c.post("vote",JSONObject().put("proposalId",p.getString("id")).put("yes",yes))},{status=if(yes)"제안에 동의했습니다" else "다른 장소를 요청했습니다";changed()})}
     fun message(kind:String){val c=client?:return;work({c.post("message",JSONObject().put("kind",kind))},{status="그룹에 전달했습니다";changed()})}
@@ -99,6 +102,25 @@ class LiveController(private val context:Context,private val changed:()->Unit) :
         },force=true)
     }
     fun retry(){val c=client;if(c!=null)work({c.post("retry")},{status="경로를 다시 요청했습니다";changed()})else if(!working){epoch++;nextRouteTryAt=0;routeFailures=0;route=null;calculateSolo(true)}}
+    fun journey(action:String,body:JSONObject=JSONObject(),done:(JSONObject)->Unit={}){
+        val active=client?:run{status="그룹에 먼저 참여해 주세요";changed();return}
+        work({active.experience(action,body)},{j->
+            if(j.has("route")){route=j.getJSONObject("route");totalDistanceMeters=route!!.getDouble("distanceMeters");destination=place(j.getJSONObject("destination"))}
+            if(j.has("experience"))snapshot?.put("experience",j.getJSONObject("experience"))
+            status="요청을 반영했습니다";done(j);changed()
+        })
+    }
+    fun mediaUpload(bytes:ByteArray,mime:String,name:String,use:String,duration:Long=0,place:Place?=null,done:()->Unit={}){
+        val active=client?:return
+        work({val a=active.upload(bytes,mime,name,use,duration);val action=when(use){"MUSIC"->"music-start";"VOICE"->"voice";else->"drop"}
+            val b=JSONObject().put("assetId",a.getString("assetId"));if(use=="MEMORY"){require(place!=null);b.put("name",place.name).put("place",placeJson(place))};active.experience(action,b)
+        },{j->snapshot?.put("experience",j.getJSONObject("experience"));status="미디어를 그룹에 전달했습니다";if(use=="MUSIC")experience.setMusicEnabled(true);done();changed()})
+    }
+    fun openMedia(action:String){
+        if(action!="EXPORT"&&action!="ALBUM"&&client==null){status="그룹에 먼저 참여해 주세요";changed();return}
+        context.startService(android.content.Intent(context,GroupOverlayService::class.java).setAction(GroupOverlayService.ACTION_MINIMIZE))
+        context.startActivity(android.content.Intent(context,MediaActionActivity::class.java).putExtra("action",action).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
     fun isOwner()=client!=null&&snapshot?.optString("ownerId")==client?.memberId
     private fun fail(e:Throwable){status=when(e){is ApiException->when(e.status){403->"그룹 생성자만 목적지를 바꿀 수 있습니다";404->"초대 코드나 그룹을 확인하세요";409->"현재 상태에서는 실행할 수 없습니다. 위치나 제안 상태를 확인하세요";else->"요청 실패: ${e.message}"};else->"서버 연결을 확인하세요"};changed()}
     private fun work(task:()->JSONObject,done:(JSONObject)->Unit,error:(Throwable)->Unit={fail(it)},force:Boolean=true){
@@ -106,7 +128,7 @@ class LiveController(private val context:Context,private val changed:()->Unit) :
         val gen=epoch;val ticket=++taskId;busy=true;if(force)working=true;changed()
         executor.execute{val result=runCatching(task);main.post{if(ticket==taskId){busy=false;working=false};if(closed||gen!=epoch)return@post;result.fold(done,error)}}
     }
-    override fun close(){closed=true;sharing=false;epoch++;main.removeCallbacksAndMessages(null);location.close();client?.let{c->executor.execute{runCatching{c.post("leave")};c.clear()}};executor.shutdown();snapshot=null;fix=null;route=null}
+    override fun close(){closed=true;sharing=false;epoch++;main.removeCallbacksAndMessages(null);location.close();experience.close();client?.let{c->executor.execute{runCatching{c.post("leave")};c.clear()}};executor.shutdown();snapshot=null;fix=null;route=null}
     companion object{
         fun placeJson(p:Place)=JSONObject().put("name",p.name).put("latitude",p.latitude).put("longitude",p.longitude)
         fun place(j:JSONObject)=Place("${j.getDouble("latitude")},${j.getDouble("longitude")}",j.optString("name","선택한 위치"),j.getDouble("latitude"),j.getDouble("longitude"))

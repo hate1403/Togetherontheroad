@@ -24,3 +24,11 @@
 정상 재계산은 이동 250m 또는 60초 경과 시, 실패 후 30초 대기. 경로 캐시는 60초, 탈퇴·종료 시 캐시 제거. TTL 4시간 후 그룹 메모리 삭제, 60초 정리 타이머. 메시지는 최대 30개/화면 최근 10분, 탈퇴자의 메시지 삭제. 회원 토큰·원시 위치는 파일/로그에 저장하지 않습니다. HTTP 접근 로그도 생성하지 않습니다.
 
 운영 배포 전 HTTPS/인증/모니터링/데이터 수명 정책을 적용해야 합니다. 현재 서버는 로컬 개발·실기기 연결 검증용이며 다중 프로세스 영속 그룹 서버가 아닙니다.
+
+## 동행 경험 v0.4.0
+
+`POST /sessions/{id}/experience/{action}`은 기존 Bearer 멤버 토큰이 필요합니다. action은 profile, wave, trail-consent, music-start, music-pause, music-resume, voice, drop, drop-delete, follow-share, follow, personal-destination, pair-upload입니다. snapshot의 experience는 수신자마다 잠금과 업로드 코드 노출 범위를 다르게 적용합니다.
+
+`POST /sessions/{id}/assets`는 MIME·이용 목적(MUSIC/VOICE/MEMORY)·파일명·실제 길이를 헤더로 받는 binary 업로드입니다. `GET /sessions/{id}/assets/{assetId}`도 매번 멤버·장소 잠금을 검사합니다. 서버는 포맷 시그니처·크기·세션/전체 용량을 제한하며 VOICE는 WAV/MP4 컨테이너의 실제 길이를 파싱해 최대 20초를 강제합니다. 미디어를 공개 URL로 배포하지 않습니다.
+
+`GET /upload`는 자체 제공 파일 선택 페이지입니다. 앱에서 pair-upload로 받은 일회용 코드와 초대 코드를 `POST /pair-upload`에 보내면 업로드 용도로 한정된 ticket을 받습니다. `POST /paired-media`는 이 ticket으로만 선택한 종류·장소의 파일 1개를 등록합니다. 코드 5분 만료·회원 탈퇴·세션 종료 후 재사용할 수 없습니다. 주 멤버 토큰은 브라우저에 전달하지 않습니다.

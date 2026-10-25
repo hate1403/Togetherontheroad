@@ -1,12 +1,13 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { validPoint,metersBetween } from './routing.mjs';
+import { Experience } from './experience.mjs';
 export class ApiError extends Error { constructor(status,message){super(message);this.status=status;} }
 const must=(ok,status,message)=>{if(!ok)throw new ApiError(status,message)};
 const label=s=>typeof s==='string'&&s.trim().length>0&&s.length<=70&&!/[\u0000-\u001f]/.test(s);
 const place=p=>validPoint(p)&&label(p.name);
 const types=new Set(['REST','LATE','READY','ARRIVED']);
 export class Store {
-  constructor({now=Date.now,ttlMs=4*3600000,router=null}={}){this.now=now;this.ttlMs=ttlMs;this.router=router;this.sessions=new Map();}
+  constructor({now=Date.now,ttlMs=4*3600000,router=null}={}){this.now=now;this.ttlMs=ttlMs;this.router=router;this.sessions=new Map();this.experience=new Experience(this,ApiError);}
   prune(){this.router?.prune?.();for(const[id,s]of this.sessions)if(s.expiresAt<=this.now())this.sessions.delete(id);}
   get(id){this.prune();const s=this.sessions.get(id);must(s,404,'Session unavailable');return s;}
   create(name,consent){
@@ -22,8 +23,8 @@ export class Store {
   joinCode(code,name,consent){this.prune();const s=[...this.sessions.values()].find(s=>s.code===String(code).toUpperCase());must(s,404,'Invitation unavailable');return this.join(s.id,s.code,name,consent);}
   auth(id,token){const s=this.get(id),m=[...s.members.values()].find(m=>m.token===token);must(m,401,'Invalid membership');m.lastSeenAt=this.now();return{s,m};}
   snapshot(id,token){
-    const{s}=this.auth(id,token),now=this.now();if(s.proposal&&s.proposal.expiresAt<=now&&s.proposal.state!=='EXPIRED'){s.proposal.state='EXPIRED';s.revision++;}
-    return{sessionId:id,revision:s.revision,ownerId:s.ownerId,expiresAt:s.expiresAt,destination:s.destination,destinationVersion:s.destinationVersion,
+    const{s,m}=this.auth(id,token),now=this.now();if(s.proposal&&s.proposal.expiresAt<=now&&s.proposal.state!=='EXPIRED'){s.proposal.state='EXPIRED';s.revision++;}
+    return{...this.experience.snapshot(s,m),personalDestination:m.routeTarget||s.destination,sessionId:id,revision:s.revision,ownerId:s.ownerId,expiresAt:s.expiresAt,destination:s.destination,destinationVersion:s.destinationVersion,
       members:[...s.members.values()].map(m=>({id:m.id,name:m.name,telemetry:m.telemetry,stale:!m.telemetry||now-m.telemetry.observedAt>30000,online:now-m.lastSeenAt<30000,route:m.route,routeError:m.routeError,routePending:m.routePending,totalDistanceMeters:m.baselineMeters,arrived:m.arrived})),
       proposal:s.proposal,messages:s.messages.filter(x=>now-x.createdAt<600000)};
   }
@@ -34,7 +35,7 @@ export class Store {
     must(t.accuracyMeters===undefined||(Number.isFinite(t.accuracyMeters)&&t.accuracyMeters>=0),400,'Invalid accuracy');
     if(m.waypoint&&metersBetween(t,m.waypoint)<=100){m.waypoint=null;m.route=null;}
     m.lastSeq=t.seq;m.telemetry=Object.fromEntries(['seq','source','latitude','longitude','observedAt','accuracyMeters'].filter(k=>t[k]!==undefined).map(k=>[k,t[k]]));s.revision++;
-    this.refresh(s,m);return{revision:s.revision};
+    this.experience.telemetry(s,m,t);this.refresh(s,m);return{revision:s.revision};
   }
   setDestination(id,token,target){
     const{s,m}=this.auth(id,token);must(s.ownerId===m.id,403,'Only group creator can set the destination');must(place(target),400,'Invalid destination');
@@ -82,7 +83,7 @@ export class Store {
     }catch(e){if(s.proposal===p&&s.members.has(m.id)){p.states[m.id]='FAILED';s.revision++;}throw e instanceof ApiError?e:new ApiError(503,'Unable to calculate the proposed road route');}
   }
   addMessage(s,m,kind,text){const msg={id:randomUUID(),memberId:m.id,name:m.name,kind,text,createdAt:this.now()};s.messages.push(msg);s.messages=s.messages.slice(-30);s.revision++;return msg;}
-  message(id,token,kind){const{s,m}=this.auth(id,token);must(types.has(kind),400,'Invalid quick message');const text={REST:'잠시 쉬어갈게요',LATE:'조금 늦을 것 같아요',READY:'출발할 준비가 됐어요',ARRIVED:'목적지에 도착했어요'}[kind];if(kind==='ARRIVED'){must(m.route&&m.telemetry&&this.now()-m.telemetry.observedAt<30000&&m.route.distanceMeters<=200&&metersBetween(m.telemetry,m.route.target)<=200,409,'Arrival requires a current location near the destination');m.arrived=true;}return this.addMessage(s,m,kind,text);}
-  leave(id,token){const{s,m}=this.auth(id,token);s.members.delete(m.id);this.router?.clear?.();s.proposal=null;s.messages=s.messages.filter(x=>x.memberId!==m.id);s.revision++;if(!s.members.size)this.sessions.delete(id);else if(s.ownerId===m.id)s.ownerId=s.members.keys().next().value;return{left:true};}
+  message(id,token,kind){const{s,m}=this.auth(id,token);must(types.has(kind),400,'Invalid quick message');const text={REST:'잠시 쉬어갈게요',LATE:'조금 늦을 것 같아요',READY:'출발할 준비가 됐어요',ARRIVED:'목적지에 도착했어요'}[kind];if(kind==='ARRIVED'){must(m.route&&m.telemetry&&this.now()-m.telemetry.observedAt<30000&&m.route.distanceMeters<=200&&metersBetween(m.telemetry,m.route.target)<=200,409,'Arrival requires a current location near the destination');m.arrived=true;}m.emojiStatus={REST:"☕",LATE:"⏳",READY:"✅",ARRIVED:"🏁"}[kind];return this.addMessage(s,m,kind,text);}
+  leave(id,token){const{s,m}=this.auth(id,token);this.experience.leave(s,m);s.members.delete(m.id);this.router?.clear?.();s.proposal=null;s.messages=s.messages.filter(x=>x.memberId!==m.id);s.revision++;if(!s.members.size)this.sessions.delete(id);else if(s.ownerId===m.id)s.ownerId=s.members.keys().next().value;return{left:true};}
   end(id,token){const{s,m}=this.auth(id,token);must(s.ownerId===m.id,403,'Only creator can end the group');s.members.clear();this.router?.clear?.();s.messages=[];s.proposal=null;this.sessions.delete(id);return{ended:true};}
 }

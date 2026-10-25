@@ -33,6 +33,11 @@ class LiveNavigationView(context:Context,private val c:LiveController,
     private var selectedId:String?=null
     private val markers=mutableListOf<Marker>()
     private var polyline:Polyline?=null
+    private val journeyLines=mutableListOf<Polyline>()
+    private var journeyKey=""
+    private var journeyPanel:JourneyPanel?=null
+    private val waveBanner=label("",28f,true,blue)
+    private val memoryBanner=button("가까운 여행 추억 열기"){journeyPanel?.dismiss();journeyPanel=JourneyPanel(context,c,sendNative).also{it.openLocalMemories()}}
     private var routeKey=0L
     private var markerKey=""
     private var actionsKey=""
@@ -70,6 +75,8 @@ class LiveNavigationView(context:Context,private val c:LiveController,
         val summary=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(22),dp(17),dp(22),dp(16));background=shape(Color.WHITE,18);elevation=dp(3).toFloat()}
         summary.addView(label(if(Build.HARDWARE.contains("ranchu")||Build.PRODUCT.contains("avd"))"TOGETHER ON THE ROAD · AVD 테스트 위치" else "TOGETHER ON THE ROAD",12f,true,blue));summary.addView(summaryTitle);summary.addView(summaryDetail);summary.addView(routeBadge)
         mapArea.addView(summary,LayoutParams(-1,-2,Gravity.TOP).apply{setMargins(dp(22),dp(22),dp(22),0)})
+        mapArea.addView(waveBanner,LayoutParams(-1,dp(60),Gravity.TOP).apply{setMargins(dp(28),dp(165),dp(28),0)})
+        mapArea.addView(memoryBanner,LayoutParams(-1,dp(52),Gravity.BOTTOM).apply{setMargins(dp(28),0,dp(28),dp(155))})
         val bottom=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),dp(12),dp(16),dp(12));background=shape(Color.WHITE,14);elevation=dp(2).toFloat()}
         bottom.addView(stateLabel)
         val controls=LinearLayout(context)
@@ -98,6 +105,7 @@ class LiveNavigationView(context:Context,private val c:LiveController,
             }
         }
         side.addView(nativeButton,LinearLayout.LayoutParams(-1,dp(54)))
+        side.addView(button("음악 · 인사 · 음성 · 여행 추억"){journeyPanel?.dismiss();journeyPanel=JourneyPanel(context,c,sendNative)},LinearLayout.LayoutParams(-1,dp(54)))
         side.addView(button("연결 설정"){settings()},LinearLayout.LayoutParams(-1,dp(46)))
         mapView.addOnDidFailLoadingMapListener{_->post{mapError="지도를 불러오지 못했습니다 · 네트워크 확인 후 앱을 다시 열어주세요";render()}}
         mapView.getMapAsync{m->
@@ -112,7 +120,7 @@ class LiveNavigationView(context:Context,private val c:LiveController,
         render()
     }
     fun start(){mapView.onStart();mapView.onResume()}
-    fun destroy(){dialog?.dismiss();dialog=null;mapView.onPause();mapView.onStop();mapView.onDestroy()}
+    fun destroy(){journeyPanel?.dismiss();journeyPanel=null;dialog?.dismiss();dialog=null;mapView.onPause();mapView.onStop();mapView.onDestroy()}
     private fun dp(v:Int)=(resources.displayMetrics.density*v).toInt()
     private fun label(s:String,size:Float,bold:Boolean=false,color:Int=ink)=TextView(context).apply{text=s;textSize=size;setTextColor(color);if(bold)typeface=Typeface.create("sans-serif",Typeface.BOLD);setPadding(0,dp(3),0,dp(3))}
     private fun shape(color:Int,r:Int=12)=GradientDrawable().apply{setColor(color);cornerRadius=dp(r).toFloat()}
@@ -122,6 +130,11 @@ class LiveNavigationView(context:Context,private val c:LiveController,
     private fun avatar(m:GroupMember):TextView=label(m.initial,21f,true,Color.WHITE).apply{gravity=Gravity.CENTER;background=shape(m.color,30)}
     fun render(){
         val snap=c.snapshot
+        journeyPanel?.refresh()
+        val waves=snap?.optJSONObject("experience")?.optJSONArray("waves")
+        val wave=waves?.let{(0 until it.length()).map{n->it.getJSONObject(n)}.lastOrNull{w->w.optString("memberId")!=c.client?.memberId&&(c.client?.serverNow()?:System.currentTimeMillis())-w.optLong("createdAt")<8000}}
+        waveBanner.text=wave?.let{"👋 ${it.getString("name")} 님이 인사했어요"}?:"";waveBanner.visibility=if(wave!=null)View.VISIBLE else View.GONE
+        memoryBanner.visibility=if(c.experience.nearbyMemory!=null)View.VISIBLE else View.GONE
         val connected=c.client!=null
         groupLabel.text=if(connected)"함께 이동" else "내 차량"
         countLabel.text=if(connected&&snap!=null)"${snap.getJSONArray("members").length()}대 참여 중" else if(connected)"그룹 연결 확인 중" else "초대할 차량이 있으면 그룹을 만드세요"
@@ -148,7 +161,7 @@ class LiveNavigationView(context:Context,private val c:LiveController,
         }
         updateActionAvailability(groupActions)
         displayMembers=members()
-        val nextMemberUiKey=displayMembers.joinToString{"${it.id}:${it.name}:${it.stale}:${it.remainingMeters}:${it.etaMinutes}"}+selectedId
+        val nextMemberUiKey=displayMembers.joinToString{"${it.id}:${it.name}:${it.stale}:${it.remainingMeters}:${it.etaMinutes}:${it.avatarEmoji}:${it.stateEmoji}:${it.convoy}"}+selectedId
         if(memberUiKey!=nextMemberUiKey){
         memberUiKey=nextMemberUiKey
         rows.removeAllViews()
@@ -156,7 +169,7 @@ class LiveNavigationView(context:Context,private val c:LiveController,
             val row=LinearLayout(context).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(7),dp(9),dp(7),dp(9));background=shape(if(m.id==selectedId)Color.rgb(237,244,255) else Color.WHITE,12)}
             row.addView(avatar(m),LinearLayout.LayoutParams(dp(44),dp(44)))
             val info=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),0,0,0)}
-            info.addView(label(m.name,19f,true));info.addView(label(if(m.stale)"최근 위치 확인 필요" else if(m.point==null)"위치 수신 대기" else if(c.client==null)"현재 위치 수신" else "위치 공유 중",12f,false,if(m.stale)Color.rgb(174,111,24) else grey));row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
+            info.addView(label("${m.avatarEmoji} ${m.name}",19f,true));info.addView(label(if(m.stale)"최근 위치 확인 필요" else if(m.point==null)"위치 수신 대기" else if(c.client==null)"현재 위치 수신" else "${m.convoy} · ${m.stateEmoji} 위치 공유 중",12f,false,if(m.stale)Color.rgb(174,111,24) else grey));row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
             val value=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.END}
             value.addView(label(m.remainingMeters?.let(::km)?:"—",19f,true));value.addView(label(m.etaMinutes?.let{"약 ${it}분"}?:"경로 대기",13f,false,grey));row.addView(value)
             row.setOnClickListener{selectedId=m.id;displayMembers.firstOrNull{it.id==m.id}?.point?.let{map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(it.latitude,it.longitude),12.0))};render()};rows.addView(row)
@@ -174,8 +187,9 @@ class LiveNavigationView(context:Context,private val c:LiveController,
         val result=mutableListOf<GroupMember>();val data=c.snapshot?.optJSONArray("members");val me=c.client?.memberId
         if(data!=null)for(i in 0 until data.length()){
             val m=data.getJSONObject(i);val t=m.optJSONObject("telemetry");val route=m.optJSONObject("route");val id=m.getString("id");val name=if(id==me)"${m.getString("name")} · 나" else m.getString("name")
+            val profiles=c.snapshot?.optJSONObject("experience")?.optJSONArray("profiles");val profile=profiles?.let{(0 until it.length()).map{n->it.getJSONObject(n)}.firstOrNull{p->p.optString("memberId")==id}}
             result+=GroupMember(id,name,m.getString("name").take(1),color(id),t?.let{GeoPoint(it.getDouble("latitude"),it.getDouble("longitude"))},
-                route?.getDouble("distanceMeters"),if(m.isNull("totalDistanceMeters"))null else m.getDouble("totalDistanceMeters"),route?.let{ceil(it.getDouble("durationSeconds")/60).toInt()},m.optBoolean("stale",true))
+                route?.getDouble("distanceMeters"),if(m.isNull("totalDistanceMeters"))null else m.getDouble("totalDistanceMeters"),route?.let{ceil(it.getDouble("durationSeconds")/60).toInt()},m.optBoolean("stale",true),profile?.optString("avatar")?:"🚗",profile?.optString("status")?:"🚗",profile?.optString("convoy")?:"")
         }
         if(result.isEmpty())result+=GroupMember("self","${c.displayName} · 나",c.displayName.take(1),blue,c.fix?.let{GeoPoint(it.latitude,it.longitude)},c.route?.getDouble("distanceMeters"),c.totalDistanceMeters,c.route?.let{ceil(it.getDouble("durationSeconds")/60).toInt()},c.fix?.let{System.currentTimeMillis()-it.observedAt>30000}?:true)
         if(data!=null){
@@ -190,15 +204,15 @@ class LiveNavigationView(context:Context,private val c:LiveController,
         val m=map?:return
         val proposal=c.snapshot?.optJSONObject("proposal")
         val candidate=proposal?.takeIf{it.optString("state") in listOf("VOTING","ACCEPTED")}?.optJSONObject("candidate")
-        val nextMarkerKey=displayMembers.joinToString{it.toString()}+c.destination.toString()+candidate.toString()
+        val nextMarkerKey=displayMembers.joinToString{it.toString()}+c.destination.toString()+candidate.toString()+c.snapshot?.optJSONObject("experience")?.optJSONArray("drops").toString()
         if(markerKey!=nextMarkerKey){markerKey=nextMarkerKey
         for(marker in markers)m.removeMarker(marker);markers.clear()
         for(member in displayMembers){val point=member.point?:continue
-            val iconKey="${member.initial}:${member.color}:${member.stale}"
+            val iconKey="${member.initial}:${member.color}:${member.stale}:${member.avatarEmoji}:${member.stateEmoji}"
             val icon=icons.getOrPut(iconKey){
             val bitmap=Bitmap.createBitmap(dp(52),dp(64),Bitmap.Config.ARGB_8888);val canvas=Canvas(bitmap);val paint=Paint(Paint.ANTI_ALIAS_FLAG)
             paint.color=Color.WHITE;canvas.drawCircle(dp(26).toFloat(),dp(26).toFloat(),dp(25).toFloat(),paint);paint.color=if(member.stale)Color.GRAY else member.color;canvas.drawCircle(dp(26).toFloat(),dp(26).toFloat(),dp(21).toFloat(),paint)
-            paint.color=Color.WHITE;paint.textSize=dp(20).toFloat();paint.typeface=Typeface.DEFAULT_BOLD;paint.textAlign=Paint.Align.CENTER;canvas.drawText(member.initial,dp(26).toFloat(),dp(33).toFloat(),paint)
+            paint.color=Color.WHITE;paint.textSize=dp(20).toFloat();paint.typeface=Typeface.DEFAULT_BOLD;paint.textAlign=Paint.Align.CENTER;canvas.drawText(member.avatarEmoji,dp(26).toFloat(),dp(31).toFloat(),paint)
             IconFactory.getInstance(context).fromBitmap(bitmap)}
             markers+=m.addMarker(MarkerOptions().position(LatLng(point.latitude,point.longitude)).title(member.name).snippet(member.id).icon(icon))
         }
@@ -213,6 +227,16 @@ class LiveNavigationView(context:Context,private val c:LiveController,
             }
             markers+=m.addMarker(MarkerOptions().position(LatLng(place.getDouble("latitude"),place.getDouble("longitude"))).title("합류 · ${place.getString("name")}").icon(icon))
         }
+        }
+        val journey=if(c.experience.showJourney)JourneyMapData.from(c)else null
+        val nextJourney=journey?.toString()?:"off"
+        if(journeyKey!=nextJourney){journeyKey=nextJourney;journeyLines.forEach{m.removePolyline(it)};journeyLines.clear()
+            journey?.optJSONArray("features")?.let{features->for(i in 0 until features.length()){
+                val f=features.getJSONObject(i);val segments=f.getJSONObject("geometry").getJSONArray("coordinates");for(j in 0 until segments.length()){
+                    val segment=segments.getJSONArray(j);val points=(0 until segment.length()).map{n->val p=segment.getJSONArray(n);LatLng(p.getDouble(1),p.getDouble(0))}
+                    if(points.size>=2)journeyLines+=m.addPolyline(PolylineOptions().addAll(points).color(color(f.getJSONObject("properties").getString("memberId"))).width(4f))
+                }
+            }}
         }
         val r=c.route;val key=r?.optLong("computedAt")?:0
         if(key!=routeKey){polyline?.let{m.removePolyline(it)};polyline=null;routeKey=key
@@ -232,7 +256,10 @@ class LiveNavigationView(context:Context,private val c:LiveController,
         try{map?.queryRenderedFeatures(map!!.projection.toScreenLocation(point))?.firstOrNull{it.hasProperty("name")&&!it.getProperty("name").isJsonNull}?.let{name=it.getStringProperty("name")}}catch(_:Exception){}
         val form=LinearLayout(context).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(24),0,dp(24),0)}
         val field=EditText(context).apply{setTextColor(ink);setHintTextColor(grey);setText(name);isSingleLine=true;filters=arrayOf(android.text.InputFilter.LengthFilter(70));hint="장소 이름"};form.addView(field);form.addView(label(String.format(Locale.US,"%.5f, %.5f",point.latitude,point.longitude),15f,false,grey))
+        c.memoryPlace=Place("memory",name,point.latitude,point.longitude)
+        if(c.client!=null)form.addView(button("이 장소에 사진 추억 남기기"){c.memoryPlace=Place("memory",field.text.toString().ifBlank{"여행 추억"},point.latitude,point.longitude);dialog?.dismiss();c.openMedia("MEMORY_IMAGE")})
         val builder=AlertDialog.Builder(context).setTitle("이 장소로 이동").setView(form).setNegativeButton("취소",null)
+        if(c.client!=null&&!c.isOwner())builder.setPositiveButton("내 목적지로 설정"){_,_->c.journey("personal-destination",JSONObject().put("destination",LiveController.placeJson(Place("selected",field.text.toString().ifBlank{"선택한 위치"},point.latitude,point.longitude))))}
         if(c.client==null||c.isOwner())builder.setPositiveButton("목적지로 설정"){_,_->c.setDestination(Place("selected",field.text.toString().ifBlank{"선택한 위치"},point.latitude,point.longitude))}
         if(c.client!=null&&c.destination!=null)builder.setNeutralButton("합류 장소 제안"){_,_->c.propose(Place("proposal",field.text.toString().ifBlank{"선택한 위치"},point.latitude,point.longitude))}
         show(builder.create())

@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import {readFileSync} from 'node:fs';
 import { Store, ApiError } from './store.mjs';
 import { RoadRouter,validPoint } from './routing.mjs';
 export function createServer(store = new Store({router:new RoadRouter()})) {
@@ -17,7 +18,30 @@ export function createServer(store = new Store({router:new RoadRouter()})) {
       if (now > bucket.reset) { bucket.count=0; bucket.reset=now+60000; }
       buckets.set(ip,bucket); if (++bucket.count > 600) throw new ApiError(429,'Rate limit exceeded');
       const path = new URL(req.url,'http://localhost').pathname;
-      if (req.method === 'GET' && path === '/health') return send(200,{ok:true,mode:'LIVE',version:'0.3.0'});
+      if (req.method === 'GET' && path === '/health') return send(200,{ok:true,mode:'LIVE',version:'0.4.0'});
+      if(req.method==='GET'&&path==='/upload'){
+        res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src blob:; base-uri 'none'; frame-ancestors 'none'"});res.end(readFileSync(new URL('../web/upload.html',import.meta.url)));return;
+      }
+      if(req.method==='POST'&&path==='/paired-media'){
+        const ticket=(req.headers.authorization??'').replace(/^Bearer /,'');store.experience.pairMember(ticket);
+        let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>20*1024*1024)throw new ApiError(413,'Media too large');chunks.push(chunk);}
+        let name;try{name=decodeURIComponent(req.headers['x-media-name']||'media');}catch{throw new ApiError(400,'Invalid media name');}
+        return send(201,await store.experience.pairedUpload(ticket,Buffer.concat(chunks),req.headers['content-type'],name,Number(req.headers['x-duration-ms'])));
+      }
+      const media=path.match(/^\/sessions\/([0-9a-f-]+)\/assets(?:\/([0-9a-f-]+))?$/);
+      const journey=path.match(/^\/sessions\/([0-9a-f-]+)\/experience\/([a-z-]+)$/);
+      const authToken=(req.headers.authorization??'').replace(/^Bearer /,'');
+      if(media){
+        const [,id,assetId]=media;store.auth(id,authToken);
+        if(req.method==='GET'&&assetId){const a=store.experience.asset(id,authToken,assetId);res.writeHead(200,{'Content-Type':a.mime,'Content-Length':a.bytes.length,'Content-Disposition':'inline','Cache-Control':'private, no-store'});res.end(a.bytes);return;}
+        if(req.method==='POST'&&!assetId){
+          let size=0;const chunks=[];
+          for await(const chunk of req){size+=chunk.length;if(size>20*1024*1024)throw new ApiError(413,'Media too large');chunks.push(chunk);}
+          let name;try{name=decodeURIComponent(req.headers['x-media-name']||'media');}catch{throw new ApiError(400,'Invalid media name');}
+          return send(201,store.experience.upload(id,authToken,Buffer.concat(chunks),req.headers['content-type'],name,req.headers['x-media-use'],Number(req.headers['x-duration-ms'])));
+        }
+        throw new ApiError(405,'Method not allowed');
+      }
       let body = {};
       if (req.method === 'POST') {
         if (!req.headers['content-type']?.startsWith('application/json')) throw new ApiError(415,'JSON required');
@@ -27,6 +51,8 @@ export function createServer(store = new Store({router:new RoadRouter()})) {
         try { body=JSON.parse(raw || '{}'); } catch { throw new ApiError(400,'Invalid JSON'); }
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiError(400,'JSON object required');
       }
+      if(path==='/pair-upload'&&req.method==='POST')return send(200,store.experience.pair(body.inviteCode,body.code));
+      if(journey&&req.method==='POST')return send(200,await store.experience.action(journey[1],authToken,journey[2],body));
       if(req.method==='POST' && path==='/route') {
         if(!validPoint(body.origin)||!validPoint(body.destination))throw new ApiError(400,'Valid route points required');
         if(!store.router)throw new ApiError(503,'Routing unavailable');

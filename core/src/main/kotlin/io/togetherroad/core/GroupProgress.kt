@@ -6,7 +6,8 @@ data class GeoPoint(val latitude: Double, val longitude: Double)
 data class GroupMember(
     val id: String, val name: String, val initial: String, val color: Int,
     val point: GeoPoint?, val remainingMeters: Double?, val totalMeters: Double?,
-    val etaMinutes: Int?, val stale: Boolean = false
+    val etaMinutes: Int?, val stale: Boolean = false,
+    val avatarEmoji:String="🚗",val stateEmoji:String="🚗",val convoy:String=""
 ) {
     val progress: Double? get() = journeyProgress(remainingMeters, totalMeters)
 }
