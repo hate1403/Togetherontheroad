@@ -24,7 +24,7 @@ class GroupOverlayService:Service(){
     override fun onCreate(){
         super.onCreate();wm=getSystemService(WindowManager::class.java)
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL,"함께 이동",NotificationManager.IMPORTANCE_LOW))
-        controller=LiveController(this){view?.render()}
+        controller=LiveController(this){view?.render();updateBubble()}
     }
     override fun onBind(intent:Intent?)=null
     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
@@ -42,8 +42,7 @@ class GroupOverlayService:Service(){
         if(!controllerStarted){controllerStarted=true;controller.start()}
         if(intent?.action==ACTION_SHOW){
             // Attach after Pleos has completed its foreground transition, above its temporary UI windows.
-            view?.let{it.destroy();runCatching{wm.removeViewImmediate(it)}};view=null
-            showExperience()
+            if(view==null)showExperience()
         }
         return START_NOT_STICKY
     }
@@ -65,8 +64,23 @@ class GroupOverlayService:Service(){
             // Each explicit SDK request has its own listener lifecycle; actual callbacks decide the result.
             val handler=Handler(Looper.getMainLooper())
             handler.postDelayed({gateway.applyWhenReady(place){ok,msg->done(ok,msg);gateway.close();if(native===gateway)native=null}},600)
-        },{stopSelf()})
+        },{showBubble()},{stopSelf()})
         view=content;wm.addView(content,params);content.start()
+    }
+    private fun updateBubble(){
+        bubble?.text=if(controller.client==null)"지도 열기" else controller.snapshot?.optJSONArray("members")?.length()?.let{"함께 이동 · ${it}대"}?:"그룹 연결 확인 중"
+    }
+    private fun showBubble(){
+        native?.close();native=null
+        view?.let{it.destroy();runCatching{wm.removeViewImmediate(it)}};view=null
+        if(bubble!=null)return
+        val small=TextView(this).apply{
+            textSize=18f;setTextColor(Color.rgb(25,102,238));gravity=Gravity.CENTER
+            background=android.graphics.drawable.GradientDrawable().apply{setColor(Color.WHITE);cornerRadius=dp(24).toFloat();setStroke(dp(1),Color.rgb(225,230,237))}
+            elevation=dp(6).toFloat();setOnClickListener{showExperience()}
+        }
+        bubble=small;updateBubble()
+        wm.addView(small,layout(dp(180),dp(64)).apply{x=dp(25);y=dp(14);setTitle("TogetherGroupCompact")})
     }
     override fun onDestroy(){
         controller.close();native?.close();native=null

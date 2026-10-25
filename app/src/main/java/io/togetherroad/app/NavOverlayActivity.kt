@@ -39,12 +39,12 @@ class NavOverlayActivity:Activity(){
     private fun launch(){
         if(started)return;started=true
         startForegroundService(Intent(this,GroupOverlayService::class.java))
-        gateway=PlatformNavigation(this);gateway?.showNavigation{_,_->
-            main.postDelayed({
-                startService(Intent(this,GroupOverlayService::class.java).setAction(GroupOverlayService.ACTION_SHOW))
-                finish()
-            },if(packageName.endsWith(".pleos"))2000L else 100L)
-        }
+        gateway=PlatformNavigation(this);gateway?.showNavigation{_,_->}
+        // Remote foreground requests may block in the platform service; the working map must stay responsive.
+        main.postDelayed({
+            startService(Intent(this,GroupOverlayService::class.java).setAction(GroupOverlayService.ACTION_SHOW))
+            finish()
+        },if(packageName.endsWith(".pleos"))2000L else 100L)
     }
     override fun onDestroy(){main.removeCallbacksAndMessages(null);gateway?.close();gateway=null;super.onDestroy()}
 }
