@@ -1,6 +1,8 @@
 package io.togetherroad.app
 
 import android.content.Context
+import android.content.Intent
+import ai.pleos.playground.navi.data.NavigationScreenRequest
 import android.os.Handler
 import android.os.Looper
 import ai.pleos.playground.navi.helper.NaviHelper
@@ -12,7 +14,7 @@ import io.togetherroad.core.Place
 import kotlin.math.abs
 
 /** Bench only: no Vehicle State parking integration yet. No background or remote route execution. */
-class PlatformNavigation(context: Context) : NavigationGateway {
+class PlatformNavigation(private val context: Context) : NavigationGateway {
     override val label = "PLEOS · NaviHelper 3.0.5 · 정차 벤치 검증 전용"
     private val handler = Handler(Looper.getMainLooper())
     private val helper = NaviHelper(context.applicationContext)
@@ -62,6 +64,32 @@ class PlatformNavigation(context: Context) : NavigationGateway {
     private fun finish(ok: Boolean, message: String) {
         val cb = pending ?: return
         pending = null; target = null; handler.removeCallbacks(timeout); cb(ok, message)
+    }
+    fun applyWhenReady(place: Place, callback: (Boolean, String) -> Unit) {
+        var count=0
+        fun attempt(){if(closed)return;if(ready)apply(place,callback)else if(++count<25)handler.postDelayed({attempt()},150)else callback(false,failure)}
+        attempt()
+    }
+    fun showNavigation(callback: (Boolean, String) -> Unit) {
+        var tries=0
+        fun launch() {
+            if(closed) return
+            if(ready) {
+                try {
+                    helper.requestNavigationScreen(NavigationScreenRequest.Foreground)
+                    callback(true,"내장 내비게이션 표시 요청")
+                } catch(e:Exception) { fallbackNavigation(callback) }
+            } else if(++tries<20) handler.postDelayed({launch()},150)
+            else fallbackNavigation(callback)
+        }
+        launch()
+    }
+    private fun fallbackNavigation(callback:(Boolean,String)->Unit) {
+        val intent=context.packageManager.getLaunchIntentForPackage("ai.umos.maps.android.navigation.app")
+        if(intent!=null) {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            callback(true,"에뮬레이터 내장 내비게이션 실행")
+        } else callback(false,"내장 내비게이션 실행 불가")
     }
     override fun close() {
         closed = true; pending = null; handler.removeCallbacksAndMessages(null)

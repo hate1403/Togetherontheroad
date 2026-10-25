@@ -2,7 +2,8 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { Store, ApiError } from './store.mjs';
-export function createServer(store = new Store()) {
+import { RoadRouter,validPoint } from './routing.mjs';
+export function createServer(store = new Store({router:new RoadRouter()})) {
   const buckets = new Map();
   const server = http.createServer(async (req,res) => {
     res.setHeader('Cache-Control','no-store'); res.setHeader('X-Content-Type-Options','nosniff');
@@ -16,7 +17,7 @@ export function createServer(store = new Store()) {
       if (now > bucket.reset) { bucket.count=0; bucket.reset=now+60000; }
       buckets.set(ip,bucket); if (++bucket.count > 600) throw new ApiError(429,'Rate limit exceeded');
       const path = new URL(req.url,'http://localhost').pathname;
-      if (req.method === 'GET' && path === '/health') return send(200,{ok:true,mode:'REPLAY',version:'0.1.0'});
+      if (req.method === 'GET' && path === '/health') return send(200,{ok:true,mode:'LIVE',version:'0.3.0'});
       let body = {};
       if (req.method === 'POST') {
         if (!req.headers['content-type']?.startsWith('application/json')) throw new ApiError(415,'JSON required');
@@ -26,20 +27,29 @@ export function createServer(store = new Store()) {
         try { body=JSON.parse(raw || '{}'); } catch { throw new ApiError(400,'Invalid JSON'); }
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiError(400,'JSON object required');
       }
+      if(req.method==='POST' && path==='/route') {
+        if(!validPoint(body.origin)||!validPoint(body.destination))throw new ApiError(400,'Valid route points required');
+        if(!store.router)throw new ApiError(503,'Routing unavailable');
+        try{return send(200,await store.router.route(body.origin,body.destination,body.waypoint||null));}
+        catch{throw new ApiError(503,'Road routing is unavailable. Try again.');}
+      }
+      if(req.method==='POST' && path==='/join')return send(200,store.joinCode(body.inviteCode,body.name,body.consent));
       if (req.method==='POST' && path==='/sessions') return send(201,store.create(body.name,body.consent));
-      const match=path.match(/^\/sessions\/([0-9a-f-]+)(?:\/(join|telemetry|proposals|approve|result|leave|end))?$/);
+      const match=path.match(/^\/sessions\/([0-9a-f-]+)(?:\/(join|telemetry|destination|proposals|vote|adopt|retry|message|leave|end))?$/);
       if (!match) throw new ApiError(404,'Not found');
       const [,id,action]=match; const token=(req.headers.authorization ?? '').replace(/^Bearer /,'');
       if (req.method==='GET' && !action) return send(200,store.snapshot(id,token));
       if (req.method!=='POST') throw new ApiError(405,'Method not allowed');
       const handlers={
         join:()=>store.join(id,body.inviteCode,body.name,body.consent),
-        telemetry:()=>store.telemetry(id,token,body), proposals:()=>store.propose(id,token),
-        approve:()=>store.approve(id,token,body.proposalId), result:()=>store.result(id,token,body.proposalId,body.result),
+        telemetry:()=>store.telemetry(id,token,body), destination:()=>store.setDestination(id,token,body),
+        proposals:()=>store.propose(id,token,body.candidate,body.kind), vote:()=>store.vote(id,token,body.proposalId,body.yes),
+        retry:()=>store.retry(id,token), message:()=>store.message(id,token,body.kind),
+        adopt:()=>store.adopt(id,token,body.proposalId),
         leave:()=>store.leave(id,token), end:()=>store.end(id,token)
       };
       if (!handlers[action]) throw new ApiError(404,'Not found');
-      send(200,handlers[action]());
+      send(200,await handlers[action]());
     } catch(e) { send(e instanceof ApiError ? e.status : 500,{error:e instanceof ApiError ? e.message : 'Internal error'}); }
   });
   // No telemetry is persisted. Prune idle sessions without requiring another request.
@@ -49,5 +59,5 @@ export function createServer(store = new Store()) {
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const host=process.env.HOST || '127.0.0.1', port=Number(process.env.PORT || 8787);
-  createServer().listen(port,host,()=>console.log(`Together on the Road REPLAY server http://${host}:${port}`));
+  createServer().listen(port,host,()=>console.log(`Together on the Road live server http://${host}:${port}`));
 }

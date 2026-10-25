@@ -1,32 +1,17 @@
 # 개발과 검증
 
-## 첫 마일스톤
-
-실행 가능한 replay 네이티브 앱, 실제 SDK에 의존하는 Pleos variant, 3단말 세션 API, 핵심 상태·권한·삭제 테스트를 만듭니다. 공모전 기획안의 전체 기능이 완료되었다고 주장하지 않습니다.
-
-## 재현 가능한 검사
+`LiveController`가 위치 수명주기·네트워크 작업 직렬화·UI 상태를 관리하고 `LiveNavigationView`는 실제 지도/상태를 표시합니다. `PhoneLocation`과 flavor별 `PlatformLocation`은 실제 위치만 제공합니다. `RoadRouter`는 검증된 실제 도로 경로만 반환합니다. 경로 실패 시 직선 거리나 임의 ETA를 대체 표시하지 않습니다.
 
 ```sh
 cd server
-npm test
-# 루트에서
-./gradlew :core:test :app:assembleReplayDebug :app:assemblePleosDebug
-./gradlew :app:lintReplayDebug :app:lintPleosDebug
+node --test test/*.test.mjs
+RUN_LIVE_NETWORK=1 node --test test/routing.test.mjs
+cd ..
+./gradlew :core:test :app:assembleReplayDebug :app:assemblePleosDebug :app:lintReplayDebug :app:lintPleosDebug
 ```
 
-핵심 검사는 미승인/만료 적용 차단, 차량별 상태 격리, 늦은 결과 무효화, 종료 삭제, 지연에 따른 후보 순위 변화를 다룹니다. 서버는 세 클라이언트 HTTP 요청, 공유 동의·멤버십, 잘못된 초대, stale/미래/중복 위치, 만료 제안, 타 차량 결과 보고, 탈퇴·TTL, 토큰 비노출을 검증합니다.
+테스트 fixture는 server/test에만 있습니다. 제품 코드에 기본 가상 참가자·위치·경로는 없습니다. 단위 테스트는 유효성·투표/개별 적용·비동기 종료 경쟁·삭제와 토큰 폐기를 검증하며 HTTP 테스트는 3개 독립 클라이언트를 사용합니다. live OSRM 테스트는 실제 외부 경로와 geometry를 확인합니다.
 
-실제 테스트 결과는 `VALIDATION.md`를 봅니다. AVD 화면·SDK 런타임·실차·부하·p95 성능·사용성 검증은 빌드 테스트와 구분합니다.
+수동 검증: 권한 허용/거절, 실제 위치 수신, 지도 선택/실제 경로, 그룹 생성/다른 단말 코드 참여, 위치 신선도/연결 끊김, 제안/전원 동의/개별 경유 경로 적용, 빠른 메시지, 탈퇴·종료, 내장 내비 목적지 SDK 콜백. AVD GPS 입력은 개발 도구이며 앱에 자동 재생을 넣지 않습니다.
 
-## 다음 개발 순서
-
-1. Pleos AVD 확보 및 정차 벤치에서 NaviHelper 초기화·목적지 반영·실패·timeout 확인.
-2. FusedLocation와 Vehicle State의 콘솔 가용성 확인 → 실제 위치·기어/속도 어댑터와 주행 UI 제한. 실제 위치 서버 수신은 정책·동의·테스트가 준비된 후 활성화.
-3. 내비 목적지를 덮어쓰는 현재 실험을 정리하고 `RequestWaypointInfo` 기반 경유지 요청 및 원래 목적지 보존 검증.
-4. 국내 경로/POI 공급자 선택, 실제 경로 비용과 후보 접근성 검증. 현재 fixture와 구분된 source 추가.
-5. 다수결 투표와 개별 승인 분리, 목적지 버전·멱등 재시도·만료·취소·복원 프로토콜.
-6. polling을 WSS로 바꾸고 지연·끊김·백그라운드 복귀 시험. 원시 좌표 없는 계측과 성능 기준 검증.
-7. SDK 권한이 확보된 경우 STT/TTS 짧은 명령 3개, 선택적으로 설명용 AI 연결.
-8. 서명된 release APK와 README/영상 작성. SDK 키는 로컬/서버 비밀 저장소에서만 관리.
-
-프로토타입 APK는 debug 서명이며 출시 인증, 차량 안전/UX 심사, 위치 데이터 정책 검토를 마친 결과물이 아닙니다.
+운영 전 필요한 작업은 실제 Vehicle State 기반 상호작용 제한, 실차/정식 권한 검증, 운영 지도·경로 제공자, HTTPS/서비스 인증과 서버 배포, 접근성/다양한 화면 크기 검증입니다. 확인되지 않은 SDK 기능이나 AI 기능을 UI 버튼으로 미리 노출하지 않습니다.

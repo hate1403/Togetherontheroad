@@ -1,0 +1,5 @@
+import{test}from'node:test';import assert from'node:assert/strict';import{RoadRouter,metersBetween}from'../src/routing.mjs';
+const a={latitude:37.4854,longitude:127.0364},b={latitude:37.7519,longitude:128.8761};
+test('road results are validated and cached',async()=>{let calls=0;const router=new RoadRouter({fetcher:async()=>{calls++;return{ok:true,json:async()=>({code:'Ok',routes:[{distance:202000,duration:9900,geometry:{type:'LineString',coordinates:[[127,37],[128,37]]},legs:[]}]})}}});const r=await router.route(a,b);assert.equal(await router.route(a,b),r);assert.equal(calls,1);assert.equal(r.provider,'OSRM');assert.equal(r.trafficAware,false)});
+test('no path and invalid coordinates return errors',async()=>{const router=new RoadRouter({fetcher:async()=>({ok:true,json:async()=>({code:'NoRoute',routes:[]})})});await assert.rejects(()=>router.route(a,b));await assert.rejects(()=>router.route({...a,latitude:NaN},b));assert.ok(metersBetween(a,b)>100000)});
+test('live OSRM road geometry',{skip:process.env.RUN_LIVE_NETWORK!=='1'},async()=>{const r=await new RoadRouter().route(a,b);assert.ok(r.distanceMeters>100000);assert.ok(r.geometry.coordinates.length>100)});

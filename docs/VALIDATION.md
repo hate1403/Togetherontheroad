@@ -1,26 +1,22 @@
-# 검증 결과
+# 검증 기록 — 2026-10-25
 
-2026-10-24 KST, macOS arm64, JDK 21, Gradle 8.9, AGP 8.7.3, Android Platform 35 및 Build Tools 34.0.0.
+**상태: 개발 중. 완료/실차 사용 가능/전체 UI 검증 완료로 취급하지 않습니다.**
 
-| 검사 | 결과 |
+| 항목 | 확인한 결과 |
 |---|---|
-| `:core:test` | 5개 통과, 실패 0 |
-| `node --test` (`server/`) | 10개 통과, 실패 0 |
-| `:app:assembleReplayDebug` | APK 생성 성공 |
-| `:app:assemblePleosDebug` | 실제 NaviHelper 3.0.5 의존성으로 APK 생성 성공 |
-| `:app:lintReplayDebug`, `:app:lintPleosDebug` | 작업 성공, 오류 0; 백업 호환성 경고가 보고됨 |
-| `node server/src/demo.mjs` + 로컬 서버 | 아래 세 차량 흐름 완료 |
-| AVD UI, Pleos SDK 런타임, 실차, 성능·부하 | 미검증 |
+| 서버 테스트 | 20개 중 19개 통과, 실제 네트워크 1개는 기본 실행에서 skip |
+| 별도 live OSRM 테스트 | 3개 모두 통과, 실제 도로 geometry/거리 반환 |
+| 실제 로컬 서버 `/route` | HTTP 200, OSRM, 9,351.7m / 705.8초 / geometry 171점, trafficAware=false |
+| Core JVM | 2개 통과 |
+| Android APK | 일반 Android 및 Pleos debug 빌드 성공 |
+| Android Lint | 두 variant 오류·경고 0, 최종 창 순서 변경 포함 |
+| 공식 Pleos AVD | Connect 2.1.0 / API34 / ARM64, 설치·SDK 서비스 연결·실제 지도 도로/지명 표시 확인 |
+| 전체 화면 조작 | **미완료**. 패널 터치가 안정적으로 전달되지 않는 현상 관찰. 내비 foreground 전환 후 패널을 붙이도록 수정했으나 효과 확인 전 Mac 잠금으로 화면 제어 중단 |
+| 실제 내장 내비 목적지 탐색 완료 | 현재 버전의 성공 콜백 검증 미완료 |
+| 실제 다중 차량 | 미완료. HTTP 테스트의 3개 클라이언트는 테스트 전용 경로 제공자를 사용함 |
 
-CLI 출력:
+OSRM 공개 도로 데이터 기반 예상 시간은 실시간 교통 ETA가 아닙니다. AVD 위치는 개발자가 입력한 GPS 테스트 좌표이며 실제 차량 주행/사용자 현재 위치를 의미하지 않습니다. 테스트 fixture는 server/test에만 있고 앱 기본 참가자·좌표·ETA·성공 응답은 없습니다.
 
-```text
-Before delay: 합류 후보 1 · 가상 휴게소 / score 55
-B delayed +25min: 합류 후보 2 · 가상 주차장 / score 70
-REPLAY apply states: APPLIED, APPLIED, APPLIED
-Session ended; server locations and tokens erased.
-```
+남은 검증은 목적지 지도 선택 → 실제 경로 표시 → 두 설치 단말 그룹 참여 → 위치/프로필/진행률 → 합류 제안/투표/개별 적용 → 탈퇴, 그리고 내장 내비 SDK 성공·실패 화면입니다. Mac 잠금 해제 후 화면 조작 검증을 재개해야 합니다.
 
-이 결과는 가상 데이터로 수행한 프로토타입 검증입니다. 실제 지도 탐색·위치·차량 정차 감지·음성 및 내장 내비 실동작을 증명하지 않습니다. 전용 Pleos AVD가 이 환경에 구성되지 않아 런타임 검증은 별도 수행해야 합니다.
-
-두 APK는 debug 빌드이며 Gradle 산출물은 `app/build/outputs/apk/`에 있습니다. 저장소에는 SDK 바이너리·로컬 SDK 경로·개인정보·키·debug keystore를 커밋하지 않습니다. 사용자는 README 절차로 동일 소스를 빌드할 수 있습니다.
+공개 NaviHelper에서 OEM 지도 마커 삽입/카메라 투영은 확인되지 않았습니다. 현재 실제 지도는 앱 소유 MapLibre 영역입니다. Vehicle State 기반 주행 제한, 실차/마켓 권한 승인, 운영 서버/지도 계약, release 서명은 아직 완료되지 않았습니다.

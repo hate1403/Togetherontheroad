@@ -1,64 +1,20 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { Store } from '../src/store.mjs';
-const setup = () => {
-  let now=100000;
-  const store=new Store({now:()=>now,ttlMs:3600000});
-  const a=store.create('A',true), b=store.join(a.sessionId,a.inviteCode,'B',true);
-  const write=(m,seq=1,extra={})=>store.telemetry(m.sessionId,m.token,{seq,source:'REPLAY',latitude:37.5,longitude:127,etaMinutes:m===a?150:158,observedAt:now,...extra});
-  return {store,a,b,write,advance:ms=>now+=ms};
-};
-test('consent, invitation and membership gate access',()=>{
-  const {store,a}=setup();
-  assert.throws(()=>store.create('X',false));
-  assert.throws(()=>store.join(a.sessionId,'wrong','X',true));
-  assert.throws(()=>store.snapshot(a.sessionId,'wrong'));
-});
-test('reject stale, nonfinite, future, duplicate and real-source data',()=>{
-  const {store,a,write}=setup();write(a);
-  for(const extra of [{seq:1},{seq:2,latitude:NaN},{seq:2,longitude:181},{seq:2,observedAt:1},{seq:2,observedAt:200000},{seq:2,source:'SDK'}]) assert.throws(()=>write(a,2,extra));
-  assert.equal(store.snapshot(a.sessionId,a.token).members[0].telemetry.seq,1);
-});
-test('only approving member can report a result; callbacks are required',()=>{
-  const {store,a,b,write}=setup();write(a);write(b);const p=store.propose(a.sessionId,a.token);
-  assert.throws(()=>store.result(a.sessionId,a.token,p.id,'APPLIED'));
-  store.approve(a.sessionId,a.token,p.id);
-  assert.equal(store.snapshot(a.sessionId,b.token).proposal.states[a.memberId],'APPLYING');
-  assert.equal(store.snapshot(a.sessionId,b.token).proposal.states[b.memberId],'PENDING');
-  assert.throws(()=>store.result(b.sessionId,b.token,p.id,'APPLIED'));
-  store.result(a.sessionId,a.token,p.id,'FAILED');
-  assert.throws(()=>store.result(a.sessionId,a.token,p.id,'APPLIED'));
-});
-test('new proposal, expired approval and stale positions cannot execute',()=>{
-  const {store,a,b,write,advance}=setup();write(a);write(b);const p=store.propose(a.sessionId,a.token);
-  const p2=store.propose(a.sessionId,a.token);assert.notEqual(p.id,p2.id);
-  assert.throws(()=>store.approve(a.sessionId,a.token,p.id));
-  advance(120001);assert.throws(()=>store.approve(a.sessionId,a.token,p2.id));
-  assert.throws(()=>store.propose(a.sessionId,a.token));
-});
-test('leave erases coordinates, credentials and proposals for remaining members',()=>{
-  const {store,a,b,write}=setup();write(a);write(b);store.propose(a.sessionId,a.token);store.leave(a.sessionId,a.token);
-  assert.throws(()=>store.snapshot(a.sessionId,a.token));assert.throws(()=>write(a,2));
-  const snap=store.snapshot(b.sessionId,b.token);assert.equal(snap.members.length,1);assert.equal(snap.proposal,null);
-  assert.ok(!JSON.stringify(snap).includes(a.token));assert.ok(!JSON.stringify(snap).includes(a.memberId));
-});
-test('end and TTL remove session and all location data',()=>{
-  const {store,a,b,write,advance}=setup();write(a);write(b);store.end(a.sessionId,a.token);
-  assert.equal(store.sessions.size,0);assert.throws(()=>store.snapshot(b.sessionId,b.token));
-  const c=store.create('C',true);advance(3600001);store.prune();assert.equal(store.sessions.size,0);assert.throws(()=>store.snapshot(c.sessionId,c.token));
-});
-test('snapshots never leak tokens or invitation codes',()=>{
-  const {store,a,b}=setup();const text=JSON.stringify(store.snapshot(a.sessionId,b.token));
-  for(const secret of [a.token,b.token,a.inviteCode])assert.ok(!text.includes(secret));
-});
-
-test('invalid creation leaves no orphan session',()=>{
-  const store=new Store();assert.throws(()=>store.create('',true));assert.equal(store.sessions.size,0);
-});
-
-test('B delay changes optimal fixture for three members',()=>{
-  const {store,a,b,write}=setup();const c=store.join(a.sessionId,a.inviteCode,'C',true);
-  write(a);write(b);write(c,1,{etaMinutes:155});
-  assert.equal(store.propose(a.sessionId,a.token).candidate.id,'demo-1');
-  write(b,2,{etaMinutes:183});assert.equal(store.propose(a.sessionId,a.token).candidate.id,'demo-2');
-});
+import{test}from'node:test';import assert from'node:assert/strict';import{Store}from'../src/store.mjs';
+class TestRouter{async route(from,to){return{distanceMeters:12000,durationSeconds:900,geometry:{type:'LineString',coordinates:[[from.longitude,from.latitude],[to.longitude,to.latitude]]},computedAt:100000,provider:'TEST',steps:[]}}}
+const settle=()=>new Promise(r=>setImmediate(r));
+function setup(router=new TestRouter()){let now=100000;const store=new Store({now:()=>now,router,ttlMs:3600000});const a=store.create('A',true),b=store.joinCode(a.inviteCode,'B',true);const telemetry=(m,seq=1,extra={})=>store.telemetry(m.sessionId,m.token,{seq,source:'ANDROID_GPS',latitude:37.4854,longitude:127.0364,observedAt:now,...extra});return{store,a,b,telemetry,destination:{name:'강릉',latitude:37.7519,longitude:128.8761},advance:ms=>now+=ms}}
+test('consent and invalid creation leave no orphan group',()=>{const s=new Store();assert.throws(()=>s.create('A',false));assert.throws(()=>s.create('',true));assert.equal(s.sessions.size,0)});
+test('invitation and membership are required',()=>{const{store,a,b}=setup();assert.equal(a.inviteCode.length,8);assert.equal(store.snapshot(a.sessionId,b.token).members.length,2);assert.throws(()=>store.joinCode('BAD','C',true));assert.throws(()=>store.snapshot(a.sessionId,'bad'))});
+test('no default destination, invented ETA or invented position',()=>{const{store,a}=setup();const s=store.snapshot(a.sessionId,a.token);assert.equal(s.destination,null);for(const m of s.members){assert.equal(m.route,null);assert.equal(m.telemetry,null)}});
+test('requires actual location source, recent data and increasing sequence',()=>{const{store,a,telemetry}=setup();telemetry(a);for(const extra of[{seq:1},{seq:2,source:'REPLAY'},{seq:2,latitude:NaN},{seq:2,longitude:181},{seq:2,observedAt:1},{seq:2,observedAt:200000}])assert.throws(()=>telemetry(a,2,extra));assert.equal(store.snapshot(a.sessionId,a.token).members[0].telemetry.seq,1)});
+test('owner sets shared destination and provider returns the route',async()=>{const{store,a,b,telemetry,destination}=setup();telemetry(a);assert.throws(()=>store.setDestination(a.sessionId,b.token,destination));store.setDestination(a.sessionId,a.token,destination);await settle();const s=store.snapshot(a.sessionId,a.token);assert.equal(s.members[0].route.provider,'TEST');assert.equal(s.members[0].totalDistanceMeters,12000);assert.equal(s.members[1].route,null)});
+test('routing failure never substitutes fabricated ETA',async()=>{const{store,a,telemetry,destination}=setup({route:async()=>{throw Error('offline')}});telemetry(a);store.setDestination(a.sessionId,a.token,destination);await settle();const m=store.snapshot(a.sessionId,a.token).members[0];assert.equal(m.route,null);assert.match(m.routeError,/경로/)});
+test('real proposal requires unanimous votes and individual road route adoption',async()=>{const{store,a,b,telemetry,destination}=setup();telemetry(a);telemetry(b);store.setDestination(a.sessionId,a.token,destination);await settle();assert.throws(()=>store.propose(a.sessionId,a.token));const p=store.propose(a.sessionId,a.token,{name:'합류 장소',latitude:37.6,longitude:128});await assert.rejects(()=>store.adopt(a.sessionId,a.token,p.id));store.vote(a.sessionId,a.token,p.id,true);assert.equal(p.state,'VOTING');store.vote(a.sessionId,b.token,p.id,true);await store.adopt(a.sessionId,a.token,p.id);assert.equal(p.states[a.memberId],'APPLIED');assert.equal(p.states[b.memberId],'PENDING')});
+test('rejected and expired proposals cannot apply',async()=>{const{store,a,b,telemetry,destination,advance}=setup();telemetry(a);store.setDestination(a.sessionId,a.token,destination);const p=store.propose(a.sessionId,a.token,{name:'다른 장소',latitude:37.6,longitude:128});store.vote(a.sessionId,b.token,p.id,false);assert.equal(p.state,'REJECTED');assert.throws(()=>store.vote(a.sessionId,a.token,p.id,true));advance(180001);await assert.rejects(()=>store.adopt(a.sessionId,a.token,p.id))});
+test('async routing cannot resurrect a deleted member',async()=>{let resolve;const{store,a,telemetry,destination}=setup({route:()=>new Promise(r=>{resolve=r})});telemetry(a);store.setDestination(a.sessionId,a.token,destination);store.leave(a.sessionId,a.token);resolve({distanceMeters:1,durationSeconds:1,computedAt:100000});await settle();assert.ok(![...store.sessions.values()][0].members.has(a.memberId))});
+test('quick messages are authenticated and arrival needs real proximity',()=>{const{store,a,b}=setup();assert.throws(()=>store.message(a.sessionId,a.token,'ARRIVED'));store.message(a.sessionId,b.token,'REST');assert.equal(store.snapshot(a.sessionId,a.token).messages[0].text,'잠시 쉬어갈게요');assert.throws(()=>store.message(a.sessionId,'bad','REST'))});
+test('leave revokes credentials and removes coordinates',()=>{const{store,a,b,telemetry}=setup();telemetry(a);store.leave(a.sessionId,a.token);assert.throws(()=>telemetry(a,2));const s=store.snapshot(b.sessionId,b.token);assert.equal(s.members.length,1);assert.equal(s.ownerId,b.memberId);assert.ok(!JSON.stringify(s).includes(a.memberId))});
+test('creator-only end and TTL erase state',()=>{const{store,a,b,advance}=setup();assert.throws(()=>store.end(a.sessionId,b.token));store.end(a.sessionId,a.token);assert.equal(store.sessions.size,0);const c=store.create('C',true);advance(3600001);store.prune();assert.throws(()=>store.snapshot(c.sessionId,c.token));assert.equal(store.sessions.size,0)});
+test('snapshots never leak tokens or invitation codes',()=>{const{store,a,b}=setup();const s=JSON.stringify(store.snapshot(a.sessionId,b.token));for(const secret of[a.token,b.token,a.inviteCode])assert.ok(!s.includes(secret))});
+test('failed adoption can retry without pretending success',async()=>{let failing=false;const router={route:async(from,to)=>{if(failing)throw Error('offline');return new TestRouter().route(from,to)}};const{store,a,b,telemetry,destination}=setup(router);telemetry(a);store.setDestination(a.sessionId,a.token,destination);await settle();const p=store.propose(a.sessionId,a.token,{name:'합류',latitude:37.6,longitude:128});store.vote(a.sessionId,a.token,p.id,true);store.vote(a.sessionId,b.token,p.id,true);failing=true;await assert.rejects(()=>store.adopt(a.sessionId,a.token,p.id));assert.equal(p.states[a.memberId],'FAILED');failing=false;await store.adopt(a.sessionId,a.token,p.id);assert.equal(p.states[a.memberId],'APPLIED')});
+test('late routing response cannot override a changed destination',async()=>{const pending=[];const{store,a,telemetry,destination}=setup({route:(from,to)=>new Promise(resolve=>pending.push({to,resolve}))});telemetry(a);store.setDestination(a.sessionId,a.token,destination);const replacement={name:'새 목적지',latitude:37.7,longitude:128.5};store.setDestination(a.sessionId,a.token,replacement);pending[0].resolve(await new TestRouter().route({},destination));await settle();assert.equal(store.snapshot(a.sessionId,a.token).members[0].route,null);assert.equal(pending.length,2);pending[1].resolve(await new TestRouter().route({},replacement));await settle();assert.equal(store.snapshot(a.sessionId,a.token).members[0].route.target.name,'새 목적지')});
+test('failed automatic routing backs off and explicit retry can override',async()=>{let calls=0;const{store,a,telemetry,destination}=setup({route:async()=>{calls++;throw Error('offline')}});telemetry(a);store.setDestination(a.sessionId,a.token,destination);await settle();telemetry(a,2);await settle();assert.equal(calls,1);store.retry(a.sessionId,a.token);await settle();assert.equal(calls,2)});

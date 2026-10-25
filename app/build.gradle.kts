@@ -6,8 +6,8 @@ android {
         applicationId = "io.togetherroad.app"
         minSdk = 28
         targetSdk = 35 // Bench prototype; store target policy must be reviewed before distribution.
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
     flavorDimensions += "platform"
     productFlavors {
@@ -19,5 +19,7 @@ android {
 }
 dependencies {
     implementation(project(":core"))
+    implementation("org.maplibre.gl:android-sdk:12.0.1")
+    "pleosImplementation"("ai.pleos.playground:FusedLocation:1.1.3")
     "pleosImplementation"("ai.pleos.playground:NaviHelper:3.0.5")
 }
